@@ -1,0 +1,19 @@
+# Entorno virtual
+/.venv/
+
+# Modelos (demasiado grandes para Git, ~338MB)
+/models/*.onnx
+/models/*.bin
+
+# Historial de conversación
+/historial.json
+
+# Python
+__pycache__/
+*.py[cod]
+
+# VS Code
+/.vscode/
+
+/learning
+/claude
