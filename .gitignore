@@ -1,5 +1,6 @@
 # Entorno virtual
 /.venv/
+.env*
 
 # Modelos (demasiado grandes para Git, ~338MB)
 /models/*.onnx
