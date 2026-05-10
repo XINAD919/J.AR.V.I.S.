@@ -45,7 +45,7 @@ class STT:
         )
         return " ".join(segment.text for segment in segments)
 
-    def listen(self, seconds: int = 15) -> str:
+    def listen(self, seconds: int = 5) -> str:
         audio = self._record(seconds)
         result = self.transcribe(audio)
         print(f"Usuario: {result}")

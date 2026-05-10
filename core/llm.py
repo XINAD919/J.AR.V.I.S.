@@ -1,59 +1,85 @@
 import json
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from ollama import chat as ollama_chat
+from dotenv import load_dotenv
 from pyfiglet import Figlet
 
-from core.stt import STT
+from core.providers import BaseProvider, create_provider
 from core.tools import TOOLS, dispatch
-from core.tts import TTS
+
+load_dotenv()
 
 
 class Agent:
-    MODEL = "qwen2.5:32b"
     MESSAGES = [
         {
             "role": "system",
             "content": (
-                "Eres J.A.R.V.I.S., un asistente de IA avanzado creado por Daniel. "
-                "Tu personalidad es sofisticada, eficiente y ligeramente formal, pero siempre cercana y empática.\n\n"
-
-                "## Identidad\n"
-                "- Nombre: J.A.R.V.I.S.\n"
-                "- Creador: Daniel\n"
-                "- Fecha de nacimiento: 27 de febrero de 2026\n\n"
-
-                "## Idioma\n"
-                "- Responde siempre en el idioma que use el usuario.\n"
-                "- Por defecto, usa el español.\n\n"
-
-                "## Trato al usuario\n"
-                "- Al iniciar una conversación nueva, saluda con naturalidad y pregunta el nombre del usuario.\n"
-                "- Dirígete al usuario como 'Señor [nombre]' o 'Señorita [nombre]' según corresponda.\n"
-                "- Si el usuario no indica su nombre o género, asume masculino y llámalo simplemente 'Señor'.\n\n"
-
-                "## Comportamiento\n"
-                "- Ejecuta las órdenes del usuario con precisión y sin demora.\n"
-                "- Si una orden no puede ejecutarse, discúlpate y explica el motivo con claridad.\n"
-                "- Nunca mientas, inventes ni alucines información. Si no sabes algo, dilo honestamente.\n"
-                "- Sé conciso cuando la situación lo requiera; extenso cuando el tema lo amerite.\n"
-                "- Usa formato Markdown cuando sea útil para estructurar la respuesta (listas, código, tablas).\n"
+                "Eres un asistente de IA especializado en la gestión de una aplicación de recordatorios de medicamentos. "
+                "Tu objetivo principal es mejorar la adherencia terapéutica de los usuarios, utilizando como base fundamental la información contenida en los archivos suministrados.\n\n"
+                "## Instrucciones de Operación\n"
+                "- Basa tus respuestas y recomendaciones estrictamente en los archivos y datos proporcionados por el usuario sobre su tratamiento.\n"
+                "- Ayuda a organizar horarios de toma, explicar posologías y clarificar instrucciones de uso según la documentación.\n"
+                "- Si la información solicitada no está presente en los archivos, indícalo claramente y recomienda consultar con un profesional de la salud.\n\n"
+                "## Herramientas disponibles\n"
+                "- Cuando el usuario pida crear un recordatorio, usa `create_reminder`. "
+                "Siempre usa `get_current_datetime` antes de usar `create_reminder` o `update_reminder` para obtener la fecha actual y la hora actual."
+                "Si el usuario pide que se repita (diariamente, cada semana, etc.), incluye los parámetros de recurrencia: "
+                "`recurrence_type`, y según el tipo también `recurrence_days` o `recurrence_interval`, "
+                "y siempre `recurrence_end_date` (si el usuario no lo especifica, pregúntalo antes de llamar la tool).\n"
+                "- Cuando el usuario pida ver o listar sus recordatorios, usa `list_reminders`.\n"
+                "- Cuando el usuario pida eliminar uno o mas recordatorios, usa primero `list_reminders` y muestra los recordatorios disponibles para que pueda elegir uno o mas por su número o índice, pide confirmación, y luego usa `delete_reminders`.\n\n"
+                "- Cuando el usuario pida actualizar un recordatorio, usa `list_reminders` y muestra los recordatorios disponibles para que pueda elegir uno por su número o índice, pide confirmación, y luego usa `update_reminder`.\n\n"
+                "- Cuando el usuario haga preguntas sobre sus recetas, medicamentos prescritos, dosis o tratamiento, "
+                "usa `search_knowledge_base` para buscar en sus documentos subidos antes de responder.\n"
+                "- Cuando necesites información médica general (efectos secundarios, interacciones, indicaciones) "
+                "que no esté en los documentos del usuario, usa `web_search`.\n\n"
+                "## Tono y Formato\n"
+                "- Mantén un tono profesional, empático, motivador y extremadamente claro.\n"
+                "- Utiliza formato Markdown (especialmente tablas y listas) para presentar planes de medicación y calendarios de forma estructurada.\n"
+                "- Prioriza la precisión técnica para garantizar la seguridad del paciente."
             ),
         }
     ]
-    HISTORIAL_PATH = Path("historial.json")
+    HISTORIALES_DIR = Path("historiales")
 
-    def __init__(self):
-        self.model = self.MODEL
+    def __init__(
+        self,
+        session_id: str = "default",
+        user_id: str | None = None,
+        provider: BaseProvider | None = None,
+        model: str | None = None,
+    ):
+        self.session_id = session_id
+        self.user_id = user_id
+        self.historial_path = self.HISTORIALES_DIR / f"{session_id}.json"
         self.historial = [msg.copy() for msg in self.MESSAGES]
         self.voice_mode = False
-        self.stt = STT()
-        self.tts = TTS()
+        self.provider = provider or create_provider(model=model)
+        self._stt = None
+        self._tts = None
+
+    @property
+    def stt(self):
+        if self._stt is None:
+            from core.stt import STT
+
+            self._stt = STT()
+        return self._stt
+
+    @property
+    def tts(self):
+        if self._tts is None:
+            from core.tts import TTS
+
+            self._tts = TTS()
+        return self._tts
 
     def _charge_historial(self) -> None:
         try:
-            if self.HISTORIAL_PATH.exists():
-                with open(self.HISTORIAL_PATH, "r") as file:
+            if self.historial_path.exists():
+                with open(self.historial_path, "r") as file:
                     loaded = json.load(file)
                 if loaded and loaded[0]["role"] == "system":
                     loaded[0] = self.MESSAGES[0].copy()
@@ -66,64 +92,90 @@ class Agent:
 
     def _save_historial(self) -> None:
         try:
-            with open(self.HISTORIAL_PATH, "w") as file:
+            self.HISTORIALES_DIR.mkdir(exist_ok=True)
+            with open(self.historial_path, "w") as file:
                 json.dump(self.historial, file, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"Error al guardar el historial: {e}")
 
     def chat(self) -> str:
+        """Versión síncrona para el CLI — hace una llamada completa y retorna la respuesta."""
+        import asyncio
+
+        tokens: list[str] = []
+
+        async def _collect():
+            async for token in self.chat_stream():
+                tokens.append(token)
+                print(token, end="", flush=True)
+            print()
+
+        # Reutilizar el loop del agente en lugar de asyncio.run(), que cierra el loop
+        # al terminar y causa errores cuando httpx intenta limpiar conexiones abiertas.
+        loop = getattr(self, "_loop", None)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+        loop.run_until_complete(_collect())
+        return "".join(tokens)
+
+    async def chat_stream(self) -> AsyncGenerator[str, None]:
+        """Versión async para la API — yield tokens uno a uno."""
         full_response = ""
-        tool_calls = []
+        tool_calls_to_dispatch: list[dict] = []
 
-        stream = ollama_chat(
-            model=self.model,
-            messages=self.historial,
-            stream=True,
-            think=False,
-            tools=TOOLS,
-        )
-        print("J.A.R.V.I.S: ", end="")
-        for chunk in stream:
-            if chunk.message.content:
-                print(chunk.message.content or "", end="", flush=True)
-                full_response += chunk.message.content or ""
-                if self.voice_mode:
-                    self.tts.speak(chunk.message.content or "")
-            if chunk.message.tool_calls:
-                tool_calls.extend(chunk.message.tool_calls)
-        print()
+        async for event in self.provider.stream(self.historial, TOOLS):
+            if event["type"] == "token":
+                yield event["content"]
+                full_response += event["content"]
+            elif event["type"] == "tool_calls":
+                tool_calls_to_dispatch = event["calls"]
 
-        if tool_calls:
+        if tool_calls_to_dispatch:
             self.historial.append(
                 {
                     "role": "assistant",
                     "content": full_response,
                     "tool_calls": [
-                        {
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            }
-                        }
-                        for tc in tool_calls
+                        {"function": {"name": tc["name"], "arguments": tc["arguments"]}}
+                        for tc in tool_calls_to_dispatch
                     ],
                 }
             )
-            for tc in tool_calls:
-                result = dispatch(tc.function.name, tc.function.arguments or {})
-                self.historial.append({"role": "tool", "content": str(result)})
-            return self.chat()
+            for tc in tool_calls_to_dispatch:
+                # Inyectar user_id y session_id en las tools que lo necesiten
+                args = tc["arguments"].copy()
+                _user_id_tools = (
+                    "create_reminder",
+                    "list_reminders",
+                    "delete_reminders",
+                    "search_knowledge_base",
+                    "update_reminder",
+                )
+                if tc["name"] in _user_id_tools:
+                    args["user_id"] = self.user_id or (
+                        self.session_id.split("_")[0]
+                        if "_" in self.session_id
+                        else self.session_id
+                    )
+                if tc["name"] in ("create_reminder", "search_knowledge_base"):
+                    args["session_id"] = self.session_id
 
-        if self.voice_mode:
-            self.tts.speak(full_response)
+                result = dispatch(tc["name"], args)
+                self.historial.append({"role": "tool", "content": str(result)})
+
+            async for token in self.chat_stream():
+                yield token
+            return
 
         self.historial.append({"role": "assistant", "content": full_response})
-        return full_response
+        self._save_historial()
 
     def run(self) -> None:
         self._charge_historial()
         figlet = Figlet()
-        print(figlet.renderText("J.A.R.V.I.S"))
+        print(figlet.renderText("MedAI Control"))
         print("\n")
         print("para salir escribe 'salir', 'exit' o 'quit'")
         print("\n")
@@ -144,8 +196,16 @@ class Agent:
                 print(f"modo de voz {estado}")
                 continue
 
-            if user_input.strip().lower() in ("salir", "exit", "quit"):
+            if user_input.strip().lower().replace(".", "") in ("salir", "exit", "quit"):
+                if self.voice_mode:
+                    self.tts.speak("Hasta luego")
+                else:
+                    print("Hasta luego")
                 self._save_historial()
+                if hasattr(self, "_loop") and not self._loop.is_closed():
+                    self._loop.close()
                 break
+
             self.historial.append({"role": "user", "content": user_input})
+            print("J.A.R.V.I.S: ", end="")
             self.chat()
