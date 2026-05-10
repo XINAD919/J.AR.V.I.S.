@@ -1,0 +1,370 @@
+"""
+Database access layer usando el Supabase Python SDK.
+Mismas firmas públicas que la versión asyncpg; solo cambian los internos.
+
+Nota: maybe_single().execute() devuelve None (no un objeto) cuando no hay fila.
+Usar siempre el patrón: `if res and res.data` / `return res.data if res else None`.
+"""
+
+from typing import Optional
+
+# pyright: ignore [reportMissingImports]
+from dotenv import load_dotenv
+
+from core.supabase_client import get_supabase
+
+load_dotenv()
+
+
+# ============================================================================
+# Usuarios
+# ============================================================================
+
+
+async def get_user_by_username(username: str) -> Optional[dict]:
+    client = get_supabase()
+    res = await client.table("users").select("*").eq("username", username).maybe_single().execute()
+    return res.data if res else None
+
+
+async def get_user_by_email(email: str) -> Optional[dict]:
+    client = get_supabase()
+    res = await client.table("users").select("*").eq("email", email).maybe_single().execute()
+    return res.data if res else None
+
+
+async def get_user_by_id(user_id: str) -> Optional[dict]:
+    client = get_supabase()
+    res = await client.table("users").select("*").eq("id", user_id).maybe_single().execute()
+    return res.data if res else None
+
+
+async def create_user(username: str, email: Optional[str] = None, **kwargs) -> str:
+    client = get_supabase()
+    preferences = kwargs.get("preferences", {})
+    res = await client.table("users").insert({
+        "username": username,
+        "email": email,
+        "preferences": preferences,
+    }).execute()
+    return str(res.data[0]["id"])
+
+
+# ============================================================================
+# Canales de notificación
+# ============================================================================
+
+
+async def get_user_channels(user_id: str, verified_only: bool = True) -> list[dict]:
+    client = get_supabase()
+    q = (
+        client.table("user_channels")
+        .select("channel, notify_id, verified, is_primary, receive_reminders, metadata")
+        .eq("user_id", user_id)
+    )
+    if verified_only:
+        q = q.eq("verified", True)
+    res = await q.order("is_primary", desc=True).order("created_at").execute()
+    return res.data or []
+
+
+async def upsert_user_channel(
+    user_id: str,
+    channel: str,
+    notify_id: str,
+    verified: bool = False,
+    is_primary: bool = False,
+    receive_reminders: bool = True,
+    metadata: Optional[dict] = None,
+) -> None:
+    client = get_supabase()
+    await client.table("user_channels").upsert(
+        {
+            "user_id": user_id,
+            "channel": channel,
+            "notify_id": notify_id,
+            "verified": verified,
+            "is_primary": is_primary,
+            "receive_reminders": receive_reminders,
+            "metadata": metadata or {},
+        },
+        on_conflict="user_id,channel",
+    ).execute()
+
+
+async def get_notification_channels(user_id: str) -> list[dict]:
+    """Canales verificados con receive_reminders=True."""
+    client = get_supabase()
+    res = await (
+        client.table("user_channels")
+        .select("channel, notify_id, metadata")
+        .eq("user_id", user_id)
+        .eq("verified", True)
+        .eq("receive_reminders", True)
+        .order("is_primary", desc=True)
+        .order("created_at")
+        .execute()
+    )
+    return res.data or []
+
+
+async def get_primary_channel(user_id: str) -> Optional[dict]:
+    """Deprecated: usar get_notification_channels."""
+    client = get_supabase()
+    res = await (
+        client.table("user_channels")
+        .select("channel, notify_id, metadata")
+        .eq("user_id", user_id)
+        .eq("verified", True)
+        .order("is_primary", desc=True)
+        .order("created_at")
+        .limit(1)
+        .maybe_single()
+        .execute()
+    )
+    return res.data if res else None
+
+
+# ============================================================================
+# Sesiones y mensajes
+# ============================================================================
+
+
+async def get_or_create_session(
+    user_id: str, session_id: str, metadata: Optional[dict] = None
+) -> str:
+    client = get_supabase()
+    res = await client.table("sessions").select("id").eq("session_id", session_id).maybe_single().execute()
+    if res and res.data:
+        await client.table("sessions").update({"last_message_at": "now()"}).eq("session_id", session_id).execute()
+        return str(res.data["id"])
+
+    res2 = await client.table("sessions").insert({
+        "user_id": user_id,
+        "session_id": session_id,
+        "metadata": metadata or {},
+        "last_message_at": "now()",
+    }).execute()
+    return str(res2.data[0]["id"])
+
+
+async def load_messages(session_id: str) -> list[dict]:
+    client = get_supabase()
+    sess = await client.table("sessions").select("id").eq("session_id", session_id).maybe_single().execute()
+    if not (sess and sess.data):
+        return []
+
+    session_uuid = sess.data["id"]
+    res = await (
+        client.table("messages")
+        .select("role, content, tool_calls")
+        .eq("session_id", session_uuid)
+        .order("sequence_num")
+        .execute()
+    )
+    messages = []
+    for row in (res.data or []):
+        msg = {"role": row["role"], "content": row["content"]}
+        if row.get("tool_calls"):
+            msg["tool_calls"] = row["tool_calls"]
+        messages.append(msg)
+    return messages
+
+
+async def save_message(
+    session_id: str, role: str, content: str, tool_calls: Optional[list] = None
+) -> None:
+    client = get_supabase()
+    sess = await client.table("sessions").select("id").eq("session_id", session_id).maybe_single().execute()
+    if not (sess and sess.data):
+        raise ValueError(f"Session {session_id} not found")
+    session_uuid = sess.data["id"]
+
+    seq_res = await (
+        client.table("messages")
+        .select("sequence_num")
+        .eq("session_id", session_uuid)
+        .order("sequence_num", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_seq = (seq_res.data[0]["sequence_num"] + 1) if seq_res.data else 0
+
+    await client.table("messages").insert({
+        "session_id": session_uuid,
+        "role": role,
+        "content": content,
+        "tool_calls": tool_calls,
+        "sequence_num": next_seq,
+    }).execute()
+
+    await client.table("sessions").update({"last_message_at": "now()"}).eq("id", session_uuid).execute()
+
+
+async def clear_session_messages(session_id: str) -> None:
+    client = get_supabase()
+    sess = await client.table("sessions").select("id").eq("session_id", session_id).maybe_single().execute()
+    if sess and sess.data:
+        await client.table("messages").delete().eq("session_id", sess.data["id"]).execute()
+
+
+# ============================================================================
+# Recordatorios
+# ============================================================================
+
+
+async def create_reminder(
+    reminder_id: str,
+    user_id: str,
+    session_id: Optional[str],
+    medication: str,
+    schedule: str,
+    message: str,
+    notes: str,
+    channel: str,
+    notify_id: str,
+    scheduled_at: str,
+    metadata: Optional[dict] = None,
+) -> str:
+    client = get_supabase()
+    session_uuid = None
+    if session_id:
+        sess = await client.table("sessions").select("id").eq("session_id", session_id).maybe_single().execute()
+        if sess and sess.data:
+            session_uuid = sess.data["id"]
+
+    res = await client.table("reminders").insert({
+        "reminder_id": reminder_id,
+        "user_id": user_id,
+        "session_id": session_uuid,
+        "medication": medication,
+        "schedule": schedule,
+        "message": message,
+        "notes": notes,
+        "channel": channel,
+        "notify_id": notify_id,
+        "scheduled_at": scheduled_at,
+        "metadata": metadata or {},
+    }).execute()
+    return str(res.data[0]["id"])
+
+
+async def update_reminder_status(
+    reminder_id: str, status: str, error_message: Optional[str] = None
+) -> None:
+    client = get_supabase()
+    await client.rpc("update_reminder_status", {
+        "p_reminder_id": reminder_id,
+        "p_status": status,
+        "p_error_message": error_message,
+    }).execute()
+
+
+async def get_user_reminders(
+    user_id: str,
+    status: Optional[str] = None,
+    date: Optional[str] = None,
+    medication: Optional[str] = None,
+) -> list[dict]:
+    client = get_supabase()
+    res = await client.rpc("get_user_reminders_grouped", {
+        "p_user_id": user_id,
+        "p_status": status,
+        "p_date": date,
+        "p_medication": medication,
+    }).execute()
+    return res.data or []
+
+
+async def delete_user_reminders(user_id: str, reminder_ids: list[str]) -> None:
+    client = get_supabase()
+    await client.table("reminders").delete().eq("user_id", user_id).in_("reminder_id", reminder_ids).execute()
+
+
+# ============================================================================
+# Documentos (RAG)
+# ============================================================================
+
+
+async def create_document(
+    user_id: str,
+    filename: str,
+    file_type: str,
+    file_path: str,
+    file_size: int,
+    document_type: str = "other",
+) -> str:
+    client = get_supabase()
+    res = await client.table("documents").insert({
+        "user_id": user_id,
+        "filename": filename,
+        "file_type": file_type,
+        "file_path": file_path,
+        "file_size": file_size,
+        "document_type": document_type,
+    }).execute()
+    return str(res.data[0]["id"])
+
+
+async def update_document_processing(
+    doc_id: str, extracted_text: str, chunk_count: int
+) -> None:
+    client = get_supabase()
+    await client.table("documents").update({
+        "extracted_text": extracted_text,
+        "processed": True,
+        "embeddings_generated": True,
+        "chunk_count": chunk_count,
+        "processed_at": "now()",
+    }).eq("id", doc_id).execute()
+
+
+async def save_document_embedding(
+    document_id: str,
+    user_id: str,
+    chunk_text: str,
+    chunk_index: int,
+    embedding: list[float],
+    metadata: Optional[dict] = None,
+) -> None:
+    client = get_supabase()
+    await client.table("document_embeddings").insert({
+        "document_id": document_id,
+        "user_id": user_id,
+        "chunk_text": chunk_text,
+        "chunk_index": chunk_index,
+        "embedding": embedding,
+        "metadata": metadata or {},
+    }).execute()
+
+
+async def search_similar_chunks(
+    user_id: str, query_embedding: list[float], top_k: int = 3
+) -> list[dict]:
+    client = get_supabase()
+    res = await client.rpc("search_similar_chunks", {
+        "p_user_id": user_id,
+        "p_embedding": query_embedding,
+        "p_top_k": top_k,
+    }).execute()
+    return [
+        {
+            "filename": row["filename"],
+            "chunk_text": row["chunk_text"],
+            "metadata": row["metadata"],
+            "distance": float(row["distance"]),
+        }
+        for row in (res.data or [])
+    ]
+
+
+async def get_user_documents(user_id: str) -> list[dict]:
+    client = get_supabase()
+    res = await (
+        client.table("documents")
+        .select("id, filename, file_type, document_type, file_size, processed, chunk_count, uploaded_at")
+        .eq("user_id", user_id)
+        .order("uploaded_at", desc=True)
+        .execute()
+    )
+    return res.data or []
