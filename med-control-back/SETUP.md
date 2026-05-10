@@ -1,18 +1,20 @@
 # MedAI - Guía de Setup Completa
 
-Esta guía te llevará paso a paso desde cero hasta tener todo el sistema funcionando con n8n, PostgreSQL y canales de notificación gratuitos.
+Esta guía lleva el proyecto desde cero hasta tener todo el sistema funcionando: Supabase (DB + Storage), n8n, Ollama y los canales de notificación.
 
 ---
 
-## 📋 Índice
+## Índice
 
 1. [Requisitos Previos](#requisitos-previos)
-2. [Configuración Básica](#configuración-básica)
-3. [Base de Datos](#base-de-datos)
-4. [n8n Setup](#n8n-setup)
-5. [Telegram Bot](#telegram-bot)
-6. [Probar el Sistema](#probar-el-sistema)
-7. [Troubleshooting](#troubleshooting)
+2. [Configuración del entorno](#configuración-del-entorno)
+3. [Levantar el stack](#levantar-el-stack)
+4. [Inicializar la base de datos](#inicializar-la-base-de-datos)
+5. [n8n Setup](#n8n-setup)
+6. [Telegram Bot](#telegram-bot)
+7. [Entorno Python](#entorno-python)
+8. [Probar el sistema](#probar-el-sistema)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -20,11 +22,16 @@ Esta guía te llevará paso a paso desde cero hasta tener todo el sistema funcio
 
 ### Software necesario
 
-- **Docker** y **Docker Compose** (recomendado) o:
-  - Python 3.12+
-  - PostgreSQL 16+
-  - Node.js 18+ (para n8n)
-- **Ollama** corriendo localmente con el modelo `qwen2.5:32b`
+- **Docker** y **Docker Compose** v2+
+- **Python 3.12+** (para desarrollo local)
+- **Ollama** corriendo localmente con los modelos `qwen2.5:32b` y `nomic-embed-text`
+
+### Paquetes del sistema (para OCR)
+
+```bash
+# Ubuntu / Debian / WSL
+sudo apt install tesseract-ocr tesseract-ocr-spa poppler-utils
+```
 
 ### Verificar instalaciones
 
@@ -32,265 +39,251 @@ Esta guía te llevará paso a paso desde cero hasta tener todo el sistema funcio
 docker --version          # Docker version 24.0+
 docker compose version    # Docker Compose version 2.0+
 python --version          # Python 3.12+
+tesseract --version       # Tesseract 5.x
+ollama list               # debe listar qwen2.5:32b y nomic-embed-text
+```
+
+### Modelos Ollama necesarios
+
+```bash
+ollama pull qwen2.5:32b
+ollama pull nomic-embed-text   # para embeddings RAG
 ```
 
 ---
 
-## Configuración Básica
+## Configuración del entorno
 
-### 1. Clonar/Preparar el proyecto
-
-```bash
-cd /home/daniel/projects/ai-lab
-```
-
-### 2. Crear archivo `.env`
+El repositorio incluye un `.env` con claves pre-generadas para desarrollo local. Si lo estás clonando por primera vez, crea el `.env` con las variables mínimas necesarias:
 
 ```bash
+# Variables mínimas para arrancar el stack
 cat > .env << 'EOF'
-# =============================================================================
-# Database
-# =============================================================================
-DATABASE_URL=postgresql://medai:medai_password@localhost:5432/medai
-
-# =============================================================================
-# n8n
-# =============================================================================
-N8N_WEBHOOK_URL=http://localhost:5678/webhook/medai-reminder
-
-# =============================================================================
-# Security
-# =============================================================================
-API_KEY=secret_api_key_change_me_in_production
-
-# =============================================================================
-# LLM Provider
-# =============================================================================
+# ── LLM ─────────────────────────────────────────────────────────────────────
 LLM_PROVIDER=ollama
+LLM_MODEL=qwen2.5:32b
 OLLAMA_HOST=http://localhost:11434
+# ANTHROPIC_API_KEY=sk-ant-...  # Solo si LLM_PROVIDER=anthropic
 
-# Para usar otros providers (opcional):
-# ANTHROPIC_API_KEY=sk-ant-...
-# OPENAI_API_KEY=sk-...
+# ── Supabase (se autogenera al hacer docker compose up por primera vez) ──────
+# Copia estos valores desde el .env del stack de Supabase después de generarlos
+SUPABASE_URL=http://localhost:8000
+SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY_del_stack>
 
-# =============================================================================
-# CORS (para frontend)
-# =============================================================================
+# ── n8n / Recordatorios ──────────────────────────────────────────────────────
+N8N_WEBHOOK_URL=http://localhost:5678/webhook/medai-reminder
+WEBHOOK_SECRET=cambia_este_secreto
+
+# ── Seguridad ────────────────────────────────────────────────────────────────
+AUTH_SECRET_INTERNAL=cambia_este_secreto_interno
+
+# ── Integraciones opcionales ─────────────────────────────────────────────────
+TAVILY_API_KEY=              # Para búsqueda web médica (web_search tool)
+TELEGRAM_BOT_TOKEN=          # Para verificación de canales Telegram
+ONESIGNAL_APP_ID=            # Para WebPush (OneSignal)
+
+# ── CORS ────────────────────────────────────────────────────────────────────
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173
-
-# =============================================================================
-# Email (opcional, solo si vas a usar email como canal)
-# =============================================================================
-# Gmail SMTP
-# SMTP_HOST=smtp.gmail.com
-# SMTP_PORT=587
-# SMTP_USER=tubot@gmail.com
-# SMTP_PASSWORD=tu_app_password_aqui
-
-# o Resend
-# RESEND_API_KEY=re_...
-
-# =============================================================================
-# OneSignal (opcional, para Web Push)
-# =============================================================================
-# ONESIGNAL_APP_ID=abc123...
-# ONESIGNAL_REST_API_KEY=xyz789...
 EOF
 ```
 
-### 3. Verificar que Ollama esté corriendo
-
-```bash
-# Verificar que Ollama responde
-curl http://localhost:11434/api/tags
-
-# Si no tienes el modelo, descargarlo
-ollama pull qwen2.5:32b
-```
+> Las variables de Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, claves JWT, contraseña de postgres, etc.) viven en el mismo `.env` del proyecto — el `docker-compose.yml` las lee para configurar todos los servicios del stack. Si ya tienes el `.env` del repositorio, tiene las claves pre-generadas y no necesitas regenerarlas.
 
 ---
 
-## Base de Datos
+## Levantar el stack
 
-### Opción A: Usar Docker Compose (Recomendado)
-
-```bash
-# Levantar solo PostgreSQL
-docker compose up -d postgres
-
-# Esperar a que esté listo
-docker compose logs -f postgres
-# Ctrl+C cuando veas "database system is ready to accept connections"
-```
-
-La base de datos se inicializa automáticamente con el script `database/init.sql`.
-
-### Opción B: PostgreSQL local
+El `docker-compose.yml` incluye el stack completo de Supabase self-hosted más n8n:
 
 ```bash
-# Crear base de datos
-createdb medai
+# Levantar todo (Supabase: Studio, Kong, Auth, PostgREST, Realtime, Storage + n8n)
+docker compose up -d
 
-# Ejecutar script de inicialización
-psql medai < database/init.sql
+# Ver estado de todos los servicios
+docker compose ps
+
+# Ver logs (esperar a que todos los servicios estén healthy)
+docker compose logs -f kong
 ```
 
-### Verificar que la DB esté lista
+**Servicios y puertos relevantes:**
+
+| Servicio | URL | Descripción |
+|---|---|---|
+| Kong (API Gateway) | `http://localhost:8000` | Punto de entrada al stack Supabase (`SUPABASE_URL`) |
+| Supabase Studio | `http://localhost:3000` | Panel de administración (tablas, Storage, logs) |
+| n8n | `http://localhost:5678` | Automatización de recordatorios |
+| PostgreSQL | `localhost:5432` | DB directa (para migraciones manuales) |
+
+---
+
+## Inicializar la base de datos
+
+El script `database/init.sql` crea todas las tablas, tipos y extensiones. Ejecutarlo una sola vez contra el PostgreSQL del stack:
 
 ```bash
-# Con Docker
-docker compose exec postgres psql -U medai -d medai -c "\dt"
+# Opción A: desde el contenedor db
+docker compose exec db psql -U postgres -d postgres -f /dev/stdin < database/init.sql
 
-# Local
-psql medai -c "\dt"
+# Opción B: conexión directa (si tienes psql instalado localmente)
+psql postgresql://postgres:TU_POSTGRES_PASSWORD@localhost:5432/postgres < database/init.sql
 ```
 
-Deberías ver las tablas: `users`, `user_channels`, `sessions`, `messages`, `reminders`, `documents`, `document_embeddings`.
+La contraseña de postgres está en el `.env` como `POSTGRES_PASSWORD`.
+
+### Verificar las tablas
+
+```bash
+docker compose exec db psql -U postgres -d postgres -c "\dt"
+```
+
+Deberías ver: `users`, `user_channels`, `sessions`, `messages`, `reminders`, `documents`, `document_embeddings`.
+
+### Seed user (para CLI local)
+
+```bash
+docker compose exec db psql -U postgres -d postgres << 'SQL'
+INSERT INTO users (id, username, email) VALUES
+  ('11111111-1111-1111-1111-111111111111', 'seed_user', 'seed@medai.local')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO sessions (id, user_id, session_id) VALUES
+  ('22222222-2222-2222-2222-222222222222',
+   '11111111-1111-1111-1111-111111111111',
+   'default')
+ON CONFLICT (session_id) DO NOTHING;
+SQL
+```
 
 ---
 
 ## n8n Setup
 
-### 1. Levantar n8n
-
-```bash
-docker compose up -d n8n
-```
-
-### 2. Acceder a la interfaz
+### 1. Acceder a n8n
 
 Abre [http://localhost:5678](http://localhost:5678)
 
 - **Usuario:** `admin`
-- **Contraseña:** `admin123`
+- **Contraseña:** `admin123` (o la configurada en `.env`)
 
-### 3. Importar workflows
+### 2. Importar el workflow
 
-#### Workflow 1: Medication Reminders
-
-1. En n8n, ve a **Workflows** → **Import from File**
-2. Selecciona `n8n-workflow-v2-free.json`
+1. Ve a **Workflows** → **Import from File**
+2. Selecciona `n8n-workflow.json`
 3. Haz clic en **Import**
+4. **Activa** el workflow (toggle verde)
 
-### 4. Configurar credenciales de PostgreSQL
+### 3. Configurar credencial PostgreSQL en n8n
 
-1. Ve a **Settings** → **Credentials**
-2. **Add Credential** → **Postgres**
-3. Llena los datos:
+1. **Settings** → **Credentials** → **Add Credential** → **Postgres**
+2. Llena los datos:
+
    ```
-   Host: postgres
-   Database: medai
-   User: medai
-   Password: medai_password
+   Host: db                  (nombre del servicio Docker)
+   Database: postgres
+   User: postgres
+   Password: TU_POSTGRES_PASSWORD (valor de POSTGRES_PASSWORD en .env)
    Port: 5432
    ```
-4. **Save**
-5. Asigna esta credencial a los nodos de PostgreSQL en ambos workflows
+
+3. **Save** y asigna la credencial a todos los nodos de Postgres en el workflow.
+
+### 4. Configurar callback al backend
+
+En el nodo "Callback to Backend" del workflow, la URL debe apuntar al backend:
+- **Con backend en Docker:** `http://fastapi:8000/webhooks/n8n`
+- **Con backend local (desarrollo):** `http://host.docker.internal:8000/webhooks/n8n`
+
+El header `X-Api-Key` debe coincidir con `WEBHOOK_SECRET` del `.env`.
 
 ---
 
 ## Telegram Bot
 
-Telegram es un canal de **solo salida**: el bot envía recordatorios pero no escucha mensajes entrantes. El registro del chat_id ocurre desde el frontend web.
+Telegram es canal de **solo salida**: el bot envía recordatorios, el chat_id se registra desde el frontend o la API.
 
 ### 1. Crear el bot con BotFather
 
-1. Abre Telegram y busca [@BotFather](https://t.me/botfather)
-2. Envía `/newbot`
-3. Nombre: `MedAI Reminder Bot`
-4. Username: `medai_reminder_bot` (o el que prefieras, debe terminar en `_bot`)
-5. **Guarda el token** (ej. `123456789:ABCdefGHI...`)
+1. En Telegram, busca [@BotFather](https://t.me/botfather)
+2. Envía `/newbot` y sigue los pasos
+3. Guarda el token (ej. `123456789:ABCdef...`)
 
 ### 2. Agregar el token al entorno
 
-En `.env` y en `docker-compose.yml` (sección `fastapi → environment`):
-
 ```env
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
+TELEGRAM_BOT_TOKEN=123456789:ABCdef...
 ```
 
-### 3. Configurar credencial en n8n (para envío de recordatorios)
+### 3. Configurar credencial en n8n
 
-1. En n8n: **Settings** → **Credentials** → **Add Credential** → **Telegram API**
-2. Pega el token y guarda como `Telegram Bot MedAI`
-3. Asigna la credencial a los nodos de Telegram en el workflow **Medication Reminders**
-4. Activa el workflow (toggle verde)
+1. **Settings** → **Credentials** → **Telegram API**
+2. Pega el token → **Save** como `Telegram Bot MedAI`
+3. Asigna la credencial a los nodos de Telegram en el workflow
 
-### 4. Vincular Telegram desde el frontend
+### 4. Vincular el chat_id
 
-1. Abre el bot una vez en Telegram (para que Telegram permita que el bot te escriba)
+1. Abre el bot en Telegram (para que pueda escribirte)
 2. Obtén tu `chat_id` con [@userinfobot](https://t.me/userinfobot)
-3. En la app web → **Ajustes** → **Notificaciones** → ingresa el chat_id
-4. El sistema envía un mensaje de prueba automáticamente; si llega, el canal queda verificado
+3. Registra el canal vía API o frontend:
 
-Verificar en la base de datos:
+   ```bash
+   curl -X POST http://localhost:8000/api/users/TU_USER_ID/channels \
+     -H "Content-Type: application/json" \
+     -d '{"channel": "telegram", "notify_id": "TU_CHAT_ID"}'
+   ```
 
-```bash
-docker compose exec postgres psql -U medai -d medai -c "SELECT * FROM user_channels;"
-```
+   Si el token está configurado, el sistema envía un mensaje de prueba y verifica el canal automáticamente.
 
 ---
 
-## Levantar el Backend FastAPI
-
-### Opción A: Docker Compose
+## Entorno Python
 
 ```bash
-docker compose up -d fastapi
-```
-
-### Opción B: Local (para desarrollo)
-
-```bash
-# Activar entorno virtual
+# Crear entorno virtual
+python -m venv .venv
 source .venv/bin/activate
 
 # Instalar dependencias
 pip install -r requirements.txt
 
-# Correr servidor
+# Opcional: voz (STT/TTS, requiere CUDA)
+# pip install faster-whisper kokoro-onnx sounddevice soundfile torch onnxruntime
+
+# Opcional: proveedor Anthropic
+# pip install anthropic
+```
+
+### Ejecutar el backend en modo desarrollo
+
+```bash
+source .venv/bin/activate
 uvicorn api.main:app --reload --port 8000
 ```
 
-### Verificar que esté funcionando
+### Verificar que el backend responde
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-Deberías ver:
+Respuesta esperada:
+
 ```json
 {
   "status": "ok",
   "provider": "ollama",
-  "database": "postgres:5432/medai"
+  "supabase": "http://localhost:8000"
 }
 ```
 
 ---
 
-## Probar el Sistema
+## Probar el sistema
 
-### Test 1: Crear recordatorio desde la CLI
+### Test 1: CLI conversacional
 
 ```bash
-# Activar entorno virtual
 source .venv/bin/activate
-
-# Editar main.py temporalmente para usar un user_id conocido
-# O crear un usuario manualmente en la DB:
-
-docker compose exec postgres psql -U medai -d medai << 'SQL'
-INSERT INTO users (id, username, email) VALUES
-  ('test-user-123', 'test_user', 'test@example.com')
-ON CONFLICT DO NOTHING;
-
-INSERT INTO user_channels (user_id, channel, notify_id, verified, is_primary) VALUES
-  ('test-user-123', 'telegram', 'TU_CHAT_ID_AQUI', true, true)
-ON CONFLICT DO NOTHING;
-SQL
-
-# Correr el CLI
 python main.py
 ```
 
@@ -302,255 +295,162 @@ Usuario: Recuérdame tomar ibuprofeno 600mg en 2 minutos
 
 El agente debería:
 1. Llamar a la tool `create_reminder`
-2. Enviar el recordatorio a n8n
-3. n8n guardarlo en la DB
-4. Esperar 2 minutos
-5. Enviarte un mensaje en Telegram
+2. Enviar el payload a n8n
+3. n8n guarda el reminder en la DB con `status='scheduled'`
+4. Tras 2 minutos, envía la notificación al canal configurado
+5. Llama al backend → `status='completed'`
 
 ### Test 2: Verificar el recordatorio en la DB
 
 ```bash
-docker compose exec postgres psql -U medai -d medai -c "SELECT * FROM reminders ORDER BY created_at DESC LIMIT 1;"
+docker compose exec db psql -U postgres -d postgres \
+  -c "SELECT reminder_id, medication, status, scheduled_at FROM reminders ORDER BY created_at DESC LIMIT 3;"
 ```
 
-Deberías ver el recordatorio con `status='scheduled'`.
-
-Después de 2 minutos:
+### Test 3: Upload de receta (OCR + RAG)
 
 ```bash
-docker compose exec postgres psql -U medai -d medai -c "SELECT reminder_id, medication, status, fired_at FROM reminders ORDER BY created_at DESC LIMIT 1;"
+curl -X POST http://localhost:8000/api/users/TU_USER_ID/documents \
+  -H "Authorization: Bearer TU_TOKEN" \
+  -F "file=@receta.jpg"
 ```
 
-El `status` debería ser `'completed'` y `fired_at` debería tener un timestamp.
+El backend ejecuta en background: Storage upload → OCR → embeddings → guardado en `document_embeddings`. El agente puede consultarlos con `search_knowledge_base`.
 
-### Test 3: Probar webhook de n8n → Backend
+### Test 4: Webhook de n8n → Backend
 
 ```bash
 curl -X POST http://localhost:8000/webhooks/n8n \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: secret_api_key_change_me" \
-  -d '{
-    "event": "reminder.fired",
-    "data": {
-      "reminder_id": "rem_test_123",
-      "user_id": "test-user-123"
-    }
-  }'
+  -H "X-Api-Key: $WEBHOOK_SECRET" \
+  -d '{"event": "reminder.fired", "reminder_id": "rem_test_123"}'
 ```
 
-Deberías ver:
-```json
-{"status": "received", "reminder_id": "rem_test_123"}
-```
+Respuesta esperada: `{"status": "received", "reminder_id": "rem_test_123"}`
 
 ---
 
-## Arquitectura del Sistema
+## Comandos útiles
 
+### Docker Compose
+
+```bash
+docker compose ps                          # Estado de servicios
+docker compose logs -f kong                # Logs del gateway Supabase
+docker compose logs -f n8n                 # Logs de n8n
+docker compose restart n8n                 # Reiniciar n8n tras cambios de config
+
+docker compose down                        # Detener todo
+docker compose down -v                     # Detener y borrar volúmenes (⚠️ borra la DB)
 ```
-Usuario escribe en CLI/Frontend
-        │
-        ▼
-    Agent (core/llm.py)
-        │
-        ├─► Provider (Ollama/Claude/GPT)
-        │
-        └─► Tools (core/tools.py)
-                │
-                ├─► create_reminder()
-                │       │
-                │       ▼
-                │   Consulta DB → obtiene canal primario
-                │       │
-                │       ▼
-                │   HTTP POST → n8n webhook
-                │                   │
-                │                   ▼
-                │               n8n Workflow
-                │                   │
-                │                   ├─► Guarda en DB (status='scheduled')
-                │                   ├─► Genera .ics
-                │                   ├─► Wait {delay_minutes}
-                │                   ├─► Switch canal
-                │                   │   ├─► Telegram API
-                │                   │   ├─► Email SMTP
-                │                   │   ├─► Discord Webhook
-                │                   │   └─► OneSignal Push
-                │                   │
-                │                   └─► Callback al backend
-                │                           │
-                │                           ▼
-                │                   POST /webhooks/n8n
-                │                   (actualiza status='completed')
-                │
-                └─► search_knowledge_base() (futuro)
-                        └─► RAG con pgvector
+
+### Base de datos (Supabase PostgreSQL)
+
+```bash
+# Conectar a psql
+docker compose exec db psql -U postgres -d postgres
+
+# Ver usuarios del sistema
+docker compose exec db psql -U postgres -d postgres -c "SELECT id, username, email FROM users;"
+
+# Ver recordatorios recientes
+docker compose exec db psql -U postgres -d postgres \
+  -c "SELECT reminder_id, medication, status, channel FROM reminders ORDER BY created_at DESC LIMIT 10;"
+
+# Ver canales configurados
+docker compose exec db psql -U postgres -d postgres \
+  -c "SELECT u.username, uc.channel, uc.notify_id, uc.verified, uc.is_primary FROM user_channels uc JOIN users u ON u.id = uc.user_id;"
+
+# Ver documentos subidos
+docker compose exec db psql -U postgres -d postgres \
+  -c "SELECT filename, processed, chunk_count, uploaded_at FROM documents ORDER BY uploaded_at DESC;"
 ```
+
+También disponible vía **Supabase Studio** en `http://localhost:3000` (editor de tablas, Storage browser, SQL editor).
 
 ---
 
 ## Troubleshooting
 
-### n8n no se conecta a PostgreSQL
+### El stack de Supabase no levanta correctamente
 
-**Síntoma:** n8n muestra error de conexión a DB
-
-**Solución:**
 ```bash
-# Verificar que postgres esté corriendo
+# Ver logs de todos los servicios
+docker compose logs --tail=50
+
+# Revisar healthchecks
 docker compose ps
 
-# Ver logs
-docker compose logs postgres
+# Recrear desde cero (⚠️ borra datos)
+docker compose down -v
+docker compose up -d
+```
 
-# Recrear servicios
-docker compose down
-docker compose up -d postgres
-# Esperar 10 segundos
-docker compose up -d n8n
+### n8n no se conecta a PostgreSQL
+
+Asegúrate de que la credencial de Postgres en n8n usa `db` como host (el nombre del servicio Docker), no `localhost`.
+
+```bash
+docker compose logs n8n | tail -20
 ```
 
 ### Telegram: el mensaje de prueba falla al vincular
 
-**Síntoma:** `POST /api/users/{id}/channels` devuelve HTTP 400 con "Telegram rechazo el mensaje"
+1. Verifica que `TELEGRAM_BOT_TOKEN` esté en `.env` y el backend reiniciado
+2. Asegúrate de haber iniciado el bot en Telegram al menos una vez (clic en `/start`)
+3. Confirma el `chat_id` correcto con [@userinfobot](https://t.me/userinfobot)
 
-**Soluciones:**
+### OCR falla con "tesseract not found"
 
-1. Verificar que `TELEGRAM_BOT_TOKEN` esté configurado en `.env`
-2. Asegurarse de haber abierto el bot en Telegram al menos una vez (si nunca abriste el bot, no puede enviarte mensajes)
-3. Confirmar que el `chat_id` es correcto con [@userinfobot](https://t.me/userinfobot)
+```bash
+# Verificar instalación
+which tesseract && tesseract --version
+
+# Instalar si falta
+sudo apt install tesseract-ocr tesseract-ocr-spa poppler-utils
+```
+
+### Embeddings fallan con "nomic-embed-text not found"
+
+```bash
+ollama pull nomic-embed-text
+ollama list  # verificar que aparece
+```
 
 ### El agente no encuentra canales configurados
 
-**Síntoma:** Al crear recordatorio: "No tienes ningún canal de notificación configurado"
+Verificar en la DB que el canal esté verificado:
 
-**Solución:**
+```bash
+docker compose exec db psql -U postgres -d postgres \
+  -c "SELECT channel, verified, receive_reminders FROM user_channels WHERE user_id = 'TU_USER_ID';"
+```
 
-1. Vincular Telegram desde el frontend (ver sección anterior)
-2. O insertar manualmente:
-   ```bash
-   docker compose exec postgres psql -U medai -d medai << 'SQL'
-   INSERT INTO user_channels (user_id, channel, notify_id, verified, is_primary)
-   VALUES ('TU_USER_ID', 'telegram', 'TU_CHAT_ID', true, true);
-   SQL
-   ```
+Si no está verificado, insertar manualmente para pruebas:
 
-### n8n no llama al backend
-
-**Síntoma:** El recordatorio se envía pero el backend no se entera
-
-**Solución:**
-
-1. Verificar que el nodo "Callback to Backend" tenga la URL correcta:
-   - Si usas Docker Compose: `http://fastapi:8000/webhooks/n8n`
-   - Si backend es local: `http://host.docker.internal:8000/webhooks/n8n`
-
-2. Verificar API key en el header del nodo:
-   ```json
-   {
-     "name": "X-API-Key",
-     "value": "secret_api_key_change_me"
-   }
-   ```
-
-3. Ver logs del backend:
-   ```bash
-   docker compose logs -f fastapi
-   ```
+```bash
+docker compose exec db psql -U postgres -d postgres << 'SQL'
+INSERT INTO user_channels (user_id, channel, notify_id, verified, is_primary)
+VALUES ('TU_USER_ID', 'telegram', 'TU_CHAT_ID', true, true)
+ON CONFLICT (user_id, channel) DO UPDATE SET verified = true;
+SQL
+```
 
 ### Ollama no responde
 
-**Síntoma:** Error "Connection refused" al llamar al agente
-
-**Solución:**
-
-1. Verificar que Ollama esté corriendo:
-   ```bash
-   curl http://localhost:11434/api/tags
-   ```
-
-2. Si usas Docker para el backend, cambiar `OLLAMA_HOST`:
-   ```env
-   # En .env
-   OLLAMA_HOST=http://host.docker.internal:11434
-   ```
-
----
-
-## Comandos Útiles
-
-### Docker Compose
-
 ```bash
-# Ver estado de todos los servicios
-docker compose ps
+curl http://localhost:11434/api/tags
 
-# Ver logs de un servicio específico
-docker compose logs -f postgres
-docker compose logs -f n8n
-docker compose logs -f fastapi
-
-# Reiniciar un servicio
-docker compose restart fastapi
-
-# Detener todo
-docker compose down
-
-# Detener y eliminar volúmenes (⚠️ borra la DB)
-docker compose down -v
-
-# Reconstruir imágenes
-docker compose build --no-cache
-docker compose up -d
+# Si el backend corre en Docker (no local), usar host.docker.internal:
+# OLLAMA_HOST=http://host.docker.internal:11434
 ```
 
-### Base de Datos
+### Backend no se conecta a Supabase
 
 ```bash
-# Conectar a psql
-docker compose exec postgres psql -U medai -d medai
+# Verificar que el stack está up y Kong responde
+curl http://localhost:8000/health
 
-# Ver usuarios
-docker compose exec postgres psql -U medai -d medai -c "SELECT * FROM users;"
-
-# Ver recordatorios
-docker compose exec postgres psql -U medai -d medai -c "SELECT * FROM reminders ORDER BY created_at DESC LIMIT 10;"
-
-# Ver canales configurados
-docker compose exec postgres psql -U medai -d medai -c "SELECT u.username, uc.channel, uc.notify_id, uc.is_primary FROM user_channels uc JOIN users u ON u.id = uc.user_id;"
-
-# Limpiar sesiones antiguas
-docker compose exec postgres psql -U medai -d medai -c "SELECT cleanup_old_sessions();"
+# Verificar variables en .env
+grep SUPABASE .env
 ```
-
-### n8n
-
-```bash
-# Exportar workflow
-# (en la UI de n8n, abre el workflow y Export → Download)
-
-# Reiniciar n8n si haces cambios en variables de entorno
-docker compose restart n8n
-```
-
----
-
-## Próximos Pasos
-
-1. **Frontend en Next.js** - Seguir la Fase 3 del [ROADMAP.md](ROADMAP.md)
-2. **RAG (documentos)** - Implementar upload de PDFs y búsqueda semántica
-3. **Más canales** - Configurar Email, Discord, Web Push según [FREE_NOTIFICATIONS_SETUP.md](docs/FREE_NOTIFICATIONS_SETUP.md)
-4. **Producción** - Configurar HTTPS, autenticación JWT, monitoreo
-
----
-
-## Ayuda
-
-Si encuentras problemas:
-
-1. Revisa la sección [Troubleshooting](#troubleshooting)
-2. Lee la documentación completa en `docs/`
-3. Verifica los logs con `docker compose logs -f <servicio>`
-4. Consulta [INTEGRATION_PLAN.md](docs/INTEGRATION_PLAN.md) para entender el flujo completo
-
-¡Listo! 🎉 Ahora tienes un sistema de recordatorios de medicación completo con notificaciones por Telegram 100% gratis.

@@ -1,55 +1,53 @@
 # MedAI - Asistente de Adherencia a Tratamientos Médicos
 
-Sistema completo de IA conversacional para ayudar a pacientes a mantener la adherencia a sus tratamientos médicos mediante recordatorios inteligentes y gestión de documentación.
+Sistema de IA conversacional para ayudar a pacientes a mantener la adherencia a sus tratamientos médicos: recordatorios inteligentes, gestión de recetas médicas con OCR, búsqueda semántica RAG y notificaciones multi-canal.
 
-## 🎯 Características
+## Características
 
-- 🤖 **Agente conversacional** multimodal (texto, voz)
-- 💊 **Recordatorios inteligentes** de medicación
-- 📱 **Multi-canal** - Telegram, Email, Discord, Web Push (100% gratis)
-- 🔄 **n8n integration** para automatizaciones complejas
-- 📄 **RAG** - sube recetas/planes médicos y pregunta sobre ellos
-- 🌐 **Multi-proveedor LLM** - Ollama (local), Claude, GPT, Gemini
-- 🗣️ **STT/TTS** - interacción por voz (offline)
-- 💾 **PostgreSQL** con búsqueda vectorial (pgvector)
+- **Agente conversacional** con 7 tools: recordatorios, RAG, búsqueda web médica
+- **Recordatorios inteligentes** con recurrencia completa (diaria, semanal, mensual, por intervalos)
+- **Multi-canal**: Telegram, Email, Discord, Web Push
+- **OCR de recetas**: sube una foto o PDF de tu receta y el agente la procesa automáticamente
+- **RAG sobre documentos**: pregunta sobre tus recetas o planes médicos subidos
+- **Búsqueda web médica** vía Tavily API
+- **Autenticación**: registro/login con email+contraseña y OAuth
+- **Multi-proveedor LLM**: Ollama (local), Anthropic Claude
+- **STT/TTS** (opcional, requiere CUDA): interacción por voz offline
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Requisitos
 
 - Docker y Docker Compose
-- Ollama con `qwen2.5:32b` (o cualquier otro modelo)
+- Ollama con `qwen2.5:32b` y `nomic-embed-text`
+- Sistema: `tesseract-ocr tesseract-ocr-spa poppler-utils` (para OCR)
 
 ### 1. Clonar y configurar
 
 ```bash
 git clone <repo_url>
-cd ai-lab
+cd med-control-back
 
-# Crear archivo .env (ver SETUP.md para detalles)
-cp .env.example .env
-# Editar .env con tus credenciales
+# Editar .env con tus credenciales (tiene claves pre-generadas para desarrollo)
+cp .env.example .env  # o editar el .env existente
 ```
 
-### 2. Levantar servicios
+### 2. Levantar el stack
 
 ```bash
-# Levantar PostgreSQL, n8n y FastAPI
+# Supabase completo (DB, Storage, Studio, Kong) + n8n
 docker compose up -d
 
-# Ver logs
-docker compose logs -f
+# Inicializar la base de datos (solo la primera vez)
+docker compose exec db psql -U postgres -d postgres -f /dev/stdin < database/init.sql
 ```
 
-### 3. Configurar Telegram (opcional pero recomendado)
+### 3. Configurar n8n
 
-1. Crear bot con [@BotFather](https://t.me/botfather)
-2. Copiar el token
-3. En n8n ([http://localhost:5678](http://localhost:5678)):
-   - Importar workflows de `n8n-*.json`
-   - Configurar credencial de Telegram
-   - Activar workflows
-4. Enviar `/start` a tu bot
+1. Abrir [http://localhost:5678](http://localhost:5678) (admin / admin123)
+2. Importar `n8n-workflow.json`
+3. Configurar credencial de Postgres (`host: db`, `db: postgres`)
+4. Activar el workflow
 
 ### 4. Usar el agente
 
@@ -58,207 +56,161 @@ docker compose logs -f
 source .venv/bin/activate
 python main.py
 
-# API (http://localhost:8000/docs)
+# API REST
+uvicorn api.main:app --reload --port 8000
 curl http://localhost:8000/health
 ```
 
-**¡Listo!** 🎉 Ahora puedes crear recordatorios desde la CLI y recibirlos en Telegram.
+Ver [SETUP.md](SETUP.md) para la guía completa paso a paso.
 
 ---
 
-## 📚 Documentación
-
-| Archivo | Descripción |
-|---------|-------------|
-| **[SETUP.md](SETUP.md)** | Guía paso a paso completa |
-| **[ROADMAP.md](ROADMAP.md)** | Plan de desarrollo (Frontend, n8n, RAG) |
-| **[docs/FREE_NOTIFICATIONS_SETUP.md](docs/FREE_NOTIFICATIONS_SETUP.md)** | Configurar canales gratuitos (Telegram, Email, etc.) |
-| **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** | Schema de PostgreSQL con pgvector |
-| **[docs/INTEGRATION_PLAN.md](docs/INTEGRATION_PLAN.md)** | Arquitectura completa del sistema |
-| **[docs/COST_COMPARISON.md](docs/COST_COMPARISON.md)** | Análisis de costos por canal |
-
----
-
-## 🏗️ Arquitectura
+## Arquitectura
 
 ```
-┌──────────────┐
-│  Usuario     │
-│  (CLI/Web)   │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────────────────────┐
-│  Agent (core/llm.py)         │
-│  ├─ Provider (LLM)           │
-│  ├─ Tools                    │
-│  │  ├─ create_reminder()    │───┐
-│  │  └─ search_knowledge()   │   │
-│  └─ RAG Module               │   │
-└──────────────────────────────┘   │
-                                   │ HTTP
-                                   ▼
-                         ┌─────────────────┐
-                         │  n8n Workflows  │
-                         │  ├─ Reminders   │
-                         │  └─ Telegram    │
-                         └────────┬────────┘
-                                  │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-              ┌─────▼────┐  ┌────▼────┐  ┌────▼────┐
-              │ Telegram │  │  Email  │  │ Discord │
-              │   API    │  │  SMTP   │  │ Webhook │
-              └──────────┘  └─────────┘  └─────────┘
+Usuario (CLI / Frontend WebSocket)
+        │
+        ▼
+    Agent (core/llm.py)
+        ├─ Provider: OllamaProvider / AnthropicProvider
+        └─ Tools (core/tools.py)
+               ├─ get_current_datetime
+               ├─ create_reminder   ──► n8n webhook ──► [Telegram / Email / Discord / WebPush]
+               ├─ list_reminders    ──► Supabase RPC
+               ├─ delete_reminders  ──► Supabase
+               ├─ update_reminder   ──► Supabase
+               ├─ search_knowledge_base ──► pgvector similarity
+               └─ web_search        ──► Tavily API
+
+FastAPI (api/)
+    ├─ WS  /ws/chat              — streaming del agente
+    ├─ POST /api/auth/*          — registro / login / OAuth
+    ├─ POST /api/users/{id}/documents — upload OCR + embeddings
+    ├─ GET  /api/users/{id}/reminders
+    ├─ *    /api/users/{id}/channels
+    └─ POST /webhooks/n8n        — callbacks de n8n
+
+Supabase (docker-compose)
+    ├─ PostgreSQL + pgvector     — DB principal
+    ├─ Storage                   — bucket "prescriptions"
+    └─ Studio                    — http://localhost:3000
 ```
 
 ---
 
-## 🗂️ Estructura del Proyecto
+## Estructura del proyecto
 
 ```
-ai-lab/
-├── core/                   # Motor del agente
-│   ├── llm.py             # Agent principal
-│   ├── providers/         # Ollama, Anthropic, OpenAI, Gemini
-│   ├── tools.py           # Function calling (n8n, RAG)
-│   ├── db.py              # PostgreSQL queries
-│   ├── stt.py             # Speech-to-Text (Whisper)
-│   └── tts.py             # Text-to-Speech (Kokoro)
-├── api/                   # FastAPI backend
-│   ├── main.py
+med-control-back/
+├── core/
+│   ├── llm.py              # Agent principal (multi-sesión, multi-proveedor)
+│   ├── providers/          # OllamaProvider, AnthropicProvider
+│   ├── tools.py            # 7 tools con function calling
+│   ├── db.py               # Funciones de acceso a Supabase
+│   ├── supabase_client.py  # Singleton async + create_temp_client()
+│   ├── storage.py          # Supabase Storage (bucket prescriptions)
+│   ├── ocr.py              # Pipeline OCR: Tesseract + LLM parsing
+│   ├── embeddings.py       # Chunking + nomic-embed-text + pgvector
+│   ├── stt.py              # Speech-to-Text (Whisper, opcional)
+│   └── tts.py              # Text-to-Speech (Kokoro, opcional)
+├── api/
+│   ├── main.py             # App factory + lifecycle Supabase
+│   ├── deps.py             # session_store, JWT auth, get_current_user
+│   ├── models.py           # Pydantic schemas
 │   └── routes/
-│       ├── webhooks.py    # n8n callbacks
-│       └── channels.py    # Gestión de canales
+│       ├── auth.py         # /api/auth/* (register, login, oauth)
+│       ├── chat.py         # WS /ws/chat
+│       ├── channels.py     # /api/users/{id}/channels
+│       ├── documents.py    # /api/users/{id}/documents (OCR pipeline)
+│       ├── reminders.py    # /api/users/{id}/reminders
+│       ├── sessions.py     # /api/sessions/
+│       └── webhooks.py     # /webhooks/n8n (callbacks n8n)
 ├── database/
-│   └── init.sql           # Schema PostgreSQL + pgvector
-├── docs/                  # Documentación detallada
-├── n8n-*.json             # Workflows de n8n
-├── docker-compose.yml     # Stack completo
-├── main.py                # CLI del agente
-├── SETUP.md               # Setup paso a paso
-└── README.md              # Este archivo
+│   └── init.sql            # Schema completo: tablas, tipos, extensiones pgvector
+├── docker-compose.yml      # Supabase self-hosted + n8n
+├── n8n-workflow.json       # Workflow de recordatorios
+├── main.py                 # CLI del agente
+├── requirements.txt
+├── SETUP.md                # Guía de setup completa
+└── CLAUDE.md               # Documentación técnica para Claude Code
 ```
 
 ---
 
-## 💡 Ejemplo de Uso
-
-### CLI
-
-```
-Usuario: Recuérdame tomar ibuprofeno 600mg a las 2pm
-
-J.A.R.V.I.S: Claro, voy a crear el recordatorio.
-
-[Llama a create_reminder tool]
-
-✅ Recordatorio creado exitosamente.
-
-💊 Medicamento: Ibuprofeno 600mg
-🕐 Programado para: 13/04/2026 a las 14:00
-📱 Canal: Telegram
-⏱️ Te notificaré en 120 minutos.
-```
-
-### A las 2pm, recibes en Telegram:
-
-```
-🔔 Recordatorio de Medicación
-
-💊 Ibuprofeno 600mg
-🕐 Hora: 14:00
-
-Hora de tomar tu ibuprofeno
-
-Con agua, después de comer
-
-[✅ Ya lo tomé] [⏰ Posponer 10 min]
-
-📅 reminder.ics (archivo adjunto)
-```
-
----
-
-## 🛠️ Stack Tecnológico
+## Stack tecnológico
 
 | Componente | Tecnología |
-|------------|-----------|
-| **LLM** | Ollama (local), Anthropic, OpenAI, Gemini |
+|---|---|
+| **LLM** | Ollama (local), Anthropic Claude |
 | **Backend** | FastAPI + Python 3.12 |
-| **Database** | PostgreSQL 16 + pgvector |
-| **Automation** | n8n |
+| **Base de datos** | Supabase (PostgreSQL + pgvector + Storage) |
+| **Automatización** | n8n (self-hosted, incluido en docker-compose) |
+| **OCR** | Tesseract + Pillow + pdf2image |
+| **Embeddings** | nomic-embed-text (Ollama) + pgvector |
+| **Web Search** | Tavily API |
+| **Auth** | JWT (PyJWT) + bcrypt |
 | **Notificaciones** | Telegram (gratis), Email SMTP, Discord, OneSignal |
-| **STT** | faster-whisper (Whisper large-v3) |
-| **TTS** | Kokoro ONNX |
+| **STT/TTS** | faster-whisper + Kokoro ONNX (opcional, CUDA) |
 | **Deployment** | Docker Compose |
 
 ---
 
-## 📊 Canales de Notificación
+## Canales de notificación
 
-| Canal | Costo | Límite | Recomendación |
-|-------|-------|--------|---------------|
-| **Telegram** | $0/mes | Ilimitado | ⭐⭐⭐⭐⭐ Primario |
-| **Email (Gmail)** | $0/mes | 500/día | ⭐⭐⭐⭐ Fallback |
-| **Discord** | $0/mes | Ilimitado | ⭐⭐⭐ Usuarios tech |
-| **Web Push (OneSignal)** | $0/mes | 10k usuarios | ⭐⭐⭐ Web-only |
-| WhatsApp | ❌ $1080/mes | 1000 users | No viable |
-| SMS | ❌ $9600/mes | 1000 users | No viable |
-
-Ver [docs/COST_COMPARISON.md](docs/COST_COMPARISON.md) para análisis completo.
+| Canal | Costo | Recomendación |
+|---|---|---|
+| **Telegram** | Gratis | Primario (ilimitado) |
+| **Email (Gmail SMTP)** | Gratis | Fallback (500/día) |
+| **Discord** | Gratis | Usuarios tech |
+| **Web Push (OneSignal)** | Gratis | Hasta 10k usuarios |
 
 ---
 
-## 🔜 Roadmap
+## Ejemplo de uso
+
+```
+Usuario: Recuérdame tomar ibuprofeno 600mg a las 2pm todos los días
+
+MedAI: Claro, voy a crear el recordatorio recurrente.
+       [Llama a create_reminder con recurrence_type="daily"]
+
+       Recordatorio creado:
+       - Medicamento: Ibuprofeno 600mg
+       - Horario: 14:00 diariamente
+       - Canal: Telegram
+```
+
+```
+Usuario: Tengo aquí la receta de mi médico [sube foto]
+
+MedAI: [Procesa OCR + embeddings en background]
+       He procesado tu receta. Encontré:
+       - Medicamento: Metformina 850mg
+       - Dosis: 1 comprimido con las comidas
+       - Duración: 3 meses
+       ¿Quieres que cree los recordatorios?
+```
+
+---
+
+## Roadmap
 
 - [x] CLI conversacional con Ollama
-- [x] Multi-proveedor LLM (Ollama, Claude, GPT, Gemini)
-- [x] Integración n8n + PostgreSQL
-- [x] Telegram bot registration
-- [x] Sistema de recordatorios completo
-- [x] Docker Compose stack
-- [ ] Frontend en Next.js
-- [ ] RAG con documentos médicos (PDFs)
-- [ ] Autenticación JWT
-- [ ] Dashboard de recordatorios
+- [x] Multi-proveedor LLM (Ollama, Anthropic)
+- [x] Integración n8n + recordatorios multi-canal
+- [x] Telegram bot (verificación automática)
+- [x] Sistema de recordatorios completo con recurrencia
+- [x] Docker Compose con Supabase self-hosted
+- [x] OCR de recetas médicas (Tesseract + LLM parsing)
+- [x] RAG con documentos médicos (pgvector + nomic-embed-text)
+- [x] Autenticación JWT (registro, login, OAuth)
+- [x] Herramientas de gestión: list/delete/update reminders
+- [x] Búsqueda web médica (Tavily)
+- [ ] Frontend en Next.js (`med-control-front/`)
+- [ ] OneSignal WebPush end-to-end (necesita `ONESIGNAL_APP_ID`)
+- [ ] Autenticación en WebSocket (`WS /ws/chat`)
 - [ ] Tests automatizados
-- [ ] Deploy en producción
-
-Ver [ROADMAP.md](ROADMAP.md) para detalles.
 
 ---
 
-## 🤝 Contribuir
-
-1. Fork el repo
-2. Crea una branch (`git checkout -b feature/amazing-feature`)
-3. Commit tus cambios (`git commit -m 'Add amazing feature'`)
-4. Push a la branch (`git push origin feature/amazing-feature`)
-5. Abre un Pull Request
-
----
-
-## 📝 Licencia
-
-MIT License - ver [LICENSE](LICENSE) para detalles.
-
----
-
-## 🙏 Agradecimientos
-
-- [Ollama](https://ollama.ai) - LLM local
-- [n8n](https://n8n.io) - Workflow automation
-- [Anthropic](https://anthropic.com) - Claude API
-- [FastAPI](https://fastapi.tiangolo.com) - Web framework
-- [pgvector](https://github.com/pgvector/pgvector) - Vector similarity
-
----
-
-## 📧 Contacto
-
-Creado por Daniel
-
----
-
-**⚠️ Disclaimer:** Este sistema es una herramienta de apoyo. No reemplaza la consulta médica profesional. Siempre consulta con tu médico antes de tomar decisiones sobre tu tratamiento.
+**Disclaimer:** Este sistema es una herramienta de apoyo. No reemplaza la consulta médica profesional.

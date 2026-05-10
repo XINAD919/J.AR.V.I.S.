@@ -36,3 +36,15 @@ bcrypt>=4.0.0
 
 # Utilidades
 pyfiglet==1.0.2
+
+# ── Opcionales (instalar manualmente si se necesitan) ─────────────────────────
+# Proveedor Anthropic (si LLM_PROVIDER=anthropic):
+# anthropic>=0.25.0
+
+# Voz — STT + TTS (requiere GPU CUDA):
+# faster-whisper>=1.0.0
+# kokoro-onnx
+# sounddevice
+# soundfile
+# torch
+# onnxruntime-gpu
