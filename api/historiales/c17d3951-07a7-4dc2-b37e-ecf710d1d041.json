@@ -1,0 +1,51 @@
+[
+  {
+    "role": "system",
+    "content": "Eres un asistente de IA especializado en la gestión de una aplicación de recordatorios de medicamentos. Tu objetivo principal es mejorar la adherencia terapéutica de los usuarios, utilizando como base fundamental la información contenida en los archivos suministrados.\n\n## Instrucciones de Operación\n- Basa tus respuestas y recomendaciones estrictamente en los archivos y datos proporcionados por el usuario sobre su tratamiento.\n- Ayuda a organizar horarios de toma, explicar posologías y clarificar instrucciones de uso según la documentación.\n- Si la información solicitada no está presente en los archivos, indícalo claramente y recomienda consultar con un profesional de la salud.\n\n## Herramientas disponibles\n- Cuando el usuario pida crear un recordatorio, usa `create_reminder`. Siempre usa `get_current_datetime` antes de usar `create_reminder` o `update_reminder` para obtener la fecha actual y la hora actual.Si el usuario pide que se repita (diariamente, cada semana, etc.), incluye los parámetros de recurrencia: `recurrence_type`, y según el tipo también `recurrence_days` o `recurrence_interval`, y siempre `recurrence_end_date` (si el usuario no lo especifica, pregúntalo antes de llamar la tool).\n- Cuando el usuario pida ver o listar sus recordatorios, usa `list_reminders`.\n- Cuando el usuario pida eliminar uno o mas recordatorios, usa primero `list_reminders` y muestra los recordatorios disponibles para que pueda elegir uno o mas por su número o índice, pide confirmación, y luego usa `delete_reminders`.\n\n- Cuando el usuario pida actualizar un recordatorio, usa `list_reminders` y muestra los recordatorios disponibles para que pueda elegir uno por su número o índice, pide confirmación, y luego usa `update_reminder`.\n\n- Cuando el usuario haga preguntas sobre sus recetas, medicamentos prescritos, dosis o tratamiento, usa `search_knowledge_base` para buscar en sus documentos subidos antes de responder.\n- Cuando necesites información médica general (efectos secundarios, interacciones, indicaciones) que no esté en los documentos del usuario, usa `web_search`.\n\n## Tono y Formato\n- Mantén un tono profesional, empático, motivador y extremadamente claro.\n- Utiliza formato Markdown (especialmente tablas y listas) para presentar planes de medicación y calendarios de forma estructurada.\n- Prioriza la precisión técnica para garantizar la seguridad del paciente."
+  },
+  {
+    "role": "user",
+    "content": "listo creo que ahora si deberia de servir intentemoslo de nuevo pero para dentro de 5 min"
+  },
+  {
+    "role": "assistant",
+    "content": "Para crear un recordatorio, primero necesitamos obtener la hora actual y luego programar el recordatorio para dentro de 5 minutos. Vamos a hacer eso.\n\n",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_current_datetime",
+          "arguments": {}
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "Sunday, 10 de May de 2026, 01:37:23"
+  },
+  {
+    "role": "assistant",
+    "content": "Actualmente la hora es 01:37. Programaremos el recordatorio para que se active en 5 minutos, a las 01:42.\n\nVamos a crear un recordatorio para ese momento.\n",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "create_reminder",
+          "arguments": {
+            "notes": "",
+            "medication": "Recordatorio de prueba",
+            "schedule": "01:42",
+            "message": "¡Es hora del recordatorio de prueba!"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": "Recordatorio creado exitosamente.\n\nMedicamento: Recordatorio de prueba\nProgramado para: 10/05/2026 a las 01:42\nCanales: Webpush\nTe notificaremos en 4 minutos."
+  },
+  {
+    "role": "assistant",
+    "content": "El recordatorio se ha creado exitosamente y te notificará a las 01:42. Te enviaré una notificación en 5 minutos para recordarte este evento.\n\nSi necesitas crear más recordatorios o tienes otras preguntas sobre tus medicamentos, no dudes en decírmelo."
+  }
+]
