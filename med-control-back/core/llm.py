@@ -28,6 +28,9 @@ load_dotenv()
 
 
 class Agent:
+    _COMPACT_THRESHOLD_CHARS = 40_000
+    _COMPACT_KEEP_LAST = 10
+
     MESSAGES = [
         {
             "role": "system",
@@ -187,6 +190,71 @@ class Agent:
             print(f"Error al cargar el historial: {e}")
             self.historial = [msg.copy() for msg in self.MESSAGES]
 
+    def _estimate_chars(self) -> int:
+        total = 0
+        for msg in self.historial:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                total += len(content)
+            if "tool_calls" in msg:
+                total += len(str(msg["tool_calls"]))
+        return total
+
+    async def _compact_historial(self) -> None:
+        if len(self.historial) <= 1 + self._COMPACT_KEEP_LAST:
+            return
+
+        system_msg = self.historial[0]
+        cut = len(self.historial) - self._COMPACT_KEEP_LAST
+
+        # No cortar en medio de una secuencia tool_calls/tool para no dejar
+        # mensajes "tool" huérfanos (Anthropic rechaza tool_result sin tool_use previo)
+        while cut > 1 and self.historial[cut].get("role") == "tool":
+            cut -= 1
+        if cut <= 1:
+            return
+
+        middle = self.historial[1:cut]
+        recent = self.historial[cut:]
+
+        summary_prompt = [
+            system_msg,
+            *middle,
+            {
+                "role": "user",
+                "content": (
+                    "Resume de forma concisa la conversación anterior en español. "
+                    "Incluye: medicamentos mencionados, recordatorios creados o modificados, "
+                    "documentos subidos y cualquier dato importante del tratamiento. "
+                    "Sé breve y preciso."
+                ),
+            },
+        ]
+
+        summary = ""
+        async for event in self.provider.stream(summary_prompt, []):
+            if event["type"] == "token":
+                summary += event["content"]
+
+        self.historial = (
+            [system_msg]
+            + [
+                {
+                    "role": "user",
+                    "content": f"[RESUMEN DE CONVERSACIÓN ANTERIOR]\n{summary}",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Entendido, tengo el contexto de la conversación anterior.",
+                },
+            ]
+            + recent
+        )
+        print(
+            f"[Compactación] {len(middle)} mensajes resumidos en un bloque de contexto."
+        )
+        self._save_historial()
+
     def _save_historial(self) -> None:
         try:
             self.HISTORIALES_DIR.mkdir(exist_ok=True)
@@ -217,8 +285,11 @@ class Agent:
         loop.run_until_complete(_collect())
         return "".join(tokens)
 
-    async def chat_stream(self) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, _compact: bool = True) -> AsyncGenerator[str, None]:
         """Versión async para la API — yield tokens uno a uno."""
+        if _compact and self._estimate_chars() > self._COMPACT_THRESHOLD_CHARS:
+            await self._compact_historial()
+
         full_response = ""
         tool_calls_to_dispatch: list[dict] = []
 
@@ -262,7 +333,7 @@ class Agent:
                 result = dispatch(tc["name"], args)
                 self.historial.append({"role": "tool", "content": str(result)})
 
-            async for token in self.chat_stream():
+            async for token in self.chat_stream(_compact=False):
                 yield token
             return
 
