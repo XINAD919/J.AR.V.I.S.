@@ -50,7 +50,7 @@ async def _fetch_notification_channels(user_id: str) -> list[dict]:
             client.table("user_channels")
             .select("channel, notify_id, metadata")
             .eq("user_id", user_id)
-            .eq("verified", True)
+            .or_("verified.eq.true,is_primary.eq.true")
             .eq("receive_reminders", True)
             .order("is_primary", desc=True)
             .order("created_at")
@@ -151,15 +151,16 @@ def create_reminder(
         ch for ch in db_channels if ch["channel"] != "webpush"
     ]
 
-    # Fan-out por (schedule_time, canal)
+    # Fan-out por (schedule_time, canal) — construye payloads y dispara en paralelo
     schedule_times = [t.strip() for t in schedule.split(",")]
     errors: list[str] = []
     sent_channels: list[str] = []
+    tasks: list[dict] = []
 
+    now = datetime.now()
     for time_str in schedule_times:
         try:
             target_time = datetime.strptime(time_str, "%H:%M")
-            now = datetime.now()
             target = now.replace(
                 hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
             )
@@ -170,7 +171,7 @@ def create_reminder(
             errors.append(f"Horario '{time_str}': formato inválido (se esperaba HH:MM)")
             continue
 
-        reminder_id = f"rem_{int(target.timestamp())}"
+        reminder_id = f"rem_{user_id.replace('-', '')[:8]}_{int(target.timestamp())}"
 
         for ch in channels_to_notify:
             payload: dict = {
@@ -201,13 +202,24 @@ def create_reminder(
                 if onesignal_app_id:
                     payload["onesignal_app_id"] = onesignal_app_id
 
-            try:
-                httpx.post(webhook_url, json=payload, timeout=10).raise_for_status()
-                sent_channels.append(ch["channel"])
-            except httpx.HTTPStatusError as e:
-                errors.append(f"{ch['channel']}@{time_str}: HTTP {e.response.status_code}")
-            except httpx.RequestError as e:
-                errors.append(f"{ch['channel']}@{time_str}: sin conexión ({e})")
+            tasks.append(payload)
+
+    def _post(p: dict) -> tuple[str, str | None]:
+        try:
+            httpx.post(webhook_url, json=p, timeout=10).raise_for_status()
+            return p["channel"], None
+        except httpx.HTTPStatusError as e:
+            return p["channel"], f"{p['channel']}@{p['schedule']}: HTTP {e.response.status_code}"
+        except httpx.RequestError as e:
+            return p["channel"], f"{p['channel']}@{p['schedule']}: sin conexión ({e})"
+
+    if tasks:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as ex:
+            for channel, err in ex.map(_post, tasks):
+                if err is None:
+                    sent_channels.append(channel)
+                else:
+                    errors.append(err)
 
     if not sent_channels:
         return (
