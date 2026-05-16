@@ -169,7 +169,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ status: 'scheduled', reminder_id: $json.reminder_id, scheduled_at: new Date(new Date($json.created_at).getTime() + $json.delay_minutes * 60000).toISOString() }) }}",
+        "responseBody": "={{ JSON.stringify({ status: 'scheduled', reminder_id:$('Normalize Input').item.json.reminder_id , scheduled_at: new Date(new Date($json.created_at).getTime() + $('Normalize Input').item.json.delay_minutes * 60000).toISOString() }) }}",
         "options": {
           "responseCode": 200
         }
@@ -310,6 +310,31 @@
               },
               "renameOutput": true,
               "outputKey": "webpush"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "fa2d8534-f3f6-499a-a0a7-c31285433f8b",
+                    "leftValue": "={{ $('Generate .ics File').item.json.channel }}",
+                    "rightValue": "whatsapp",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "whatsapp"
             }
           ]
         },
@@ -339,8 +364,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        32,
-        624
+        -32,
+        528
       ],
       "webhookId": "65119d3b-e3e3-4449-ab67-83e274234470",
       "credentials": {
@@ -365,8 +390,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        480,
-        624
+        416,
+        528
       ],
       "webhookId": "e806f19a-5538-4465-9f1b-b85ed79fd104",
       "credentials": {
@@ -394,8 +419,8 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        480,
-        816
+        416,
+        720
       ],
       "webhookId": "f173212c-5e03-42b3-b544-8d4242923c66",
       "credentials": {
@@ -419,8 +444,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
-        1008
+        416,
+        912
       ],
       "notes": "El usuario debe configurar su webhook de Discord y pasarlo en discord_webhook_url"
     },
@@ -449,8 +474,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
-        1200
+        416,
+        1104
       ],
       "notes": "Gratis hasta 10,000 suscriptores. Configura en onesignal.com"
     },
@@ -535,8 +560,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        256,
-        816
+        192,
+        720
       ]
     },
     {
@@ -548,8 +573,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        256,
-        624
+        192,
+        528
       ]
     },
     {
@@ -749,34 +774,6 @@
     },
     {
       "parameters": {
-        "operation": "get",
-        "tableId": "sessions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "session_id",
-              "keyValue": "={{ $json.session_id }}"
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        -1760,
-        912
-      ],
-      "id": "3b8e48d0-b9ea-4b97-864d-1c57e23dfda9",
-      "name": "Get a row",
-      "credentials": {
-        "supabaseApi": {
-          "id": "2mVvcanszl8xPZ3D",
-          "name": "Supabase account"
-        }
-      }
-    },
-    {
-      "parameters": {
         "jsCode": "const createdAt = new Date($(\"Normalize Input\").first().json.created_at);\nconst scheduled_at = new Date(\n  createdAt.getTime() + 60 * $(\"Normalize Input\").first().json.delay_minutes,\n);\n\nconst notes =\n  $(\"Normalize Input\").first().json.notes === \"\"\n    ? null\n    : $(\"Normalize Input\").first().json.notes;\n\nconst recurrence_type =\n  $(\"Normalize Input\").first().json.recurrence_type === \"\"\n    ? null\n    : $(\"Normalize Input\").first().json.recurrence_type;\n\nconst recurrence_end_date =\n  $(\"Normalize Input\").first().json.recurrence_end_date === \"\"\n    ? null\n    : $(\"Normalize Input\").first().json.recurrence_end_date;\n\nconst recurrence_days =\n  $(\"Normalize Input\").first().json.recurrence_days === \"[]\"\n    ? null\n    : $(\"Normalize Input\").first().json.recurrence_days;\n\nreturn {\n  ...$(\"Normalize Input\").first().json,\n  scheduled_at,\n  session_id: $input.first().json.id,\n  status: \"scheduled\",\n  notes,\n  recurrence_type,\n  recurrence_end_date,\n  recurrence_days,\n};\n"
       },
       "type": "n8n-nodes-base.code",
@@ -964,9 +961,112 @@
           "name": "Supabase account"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "sessions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "keyValue": "={{ $json.session_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1760,
+        912
+      ],
+      "id": "3b8e48d0-b9ea-4b97-864d-1c57e23dfda9",
+      "name": "Get a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2mVvcanszl8xPZ3D",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.24.66.234:4001/api/sendText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Api-Key",
+              "value": "eD5Sv7WUE84k8Bnfwg+MyHMCnR3TjVTT6dbjphDbOug="
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chatId\": \"{{$json.notify_id}}@c.us\",\n  \"id\": null,\n  \"reply_to\": null,\n  \"text\": \"{{ $json.message }}\",\n  \"linkPreview\": true,\n  \"linkPreviewHighQuality\": false,\n  \"session\": \"default\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        416,
+        1312
+      ],
+      "id": "6cba133b-d940-4dc7-8cb3-7ac46b12f40e",
+      "name": "HTTP Request"
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "Webhook Entry": [
+      {
+        "json": {
+          "headers": {
+            "content-type": "application/json",
+            "user-agent": "PostmanRuntime/7.54.0",
+            "accept": "*/*",
+            "cache-control": "no-cache",
+            "postman-token": "c15c7f1e-9594-43f5-bf73-abbc3a4097c0",
+            "host": "localhost:5678",
+            "accept-encoding": "gzip, deflate, br",
+            "connection": "keep-alive",
+            "content-length": "668"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "user_id": "c17d3951-07a7-4dc2-b37e-ecf710d1d041",
+            "session_id": "c17d3951-07a7-4dc2-b37e-ecf710d1d041",
+            "reminder_id": "rem_1778536680",
+            "medication": "Tomar agua",
+            "schedule": "16:58",
+            "message": "¡Es hora de tomar un vaso de agua!",
+            "notes": "",
+            "channel": "whatsapp",
+            "notify_id": "573107073803",
+            "delay_minutes": 1,
+            "created_at": "2026-05-10T17:02:50.781992",
+            "is_recurring": false,
+            "recurrence_type": "interval_hours",
+            "recurrence_days": [],
+            "recurrence_interval": "",
+            "recurrence_end_date": "2026-05-10",
+            "n8n_webhook_url": "http://localhost:5678/webhook/medai-reminder"
+          },
+          "webhookUrl": "http://localhost:5678/webhook-test/medai-reminder",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "Webhook Entry": {
       "main": [
@@ -1054,6 +1154,13 @@
         [
           {
             "node": "Send Web Push (OneSignal)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
             "type": "main",
             "index": 0
           }
@@ -1219,17 +1326,6 @@
         ]
       ]
     },
-    "Get a row": {
-      "main": [
-        [
-          {
-            "node": "Parse Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Parse Data": {
       "main": [
         [
@@ -1288,6 +1384,28 @@
           }
         ]
       ]
+    },
+    "Get a row": {
+      "main": [
+        [
+          {
+            "node": "Parse Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Callback to Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -1296,9 +1414,9 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "5746cc2e-c77c-4500-9117-6e2c9bda20fa",
+  "versionId": "5034618a-9ca6-46c2-889b-f63e17c216b7",
   "meta": {
-    "instanceId": "68c131c8c58b5429ce41434546f329343285f09cd49ec4a73c19e0cf9a166a5e"
+    "instanceId": "0c4f7c70fc44a45c19fc253fba6ed33ecb3324e2ee86a6541e4601f5b5d9feb8"
   },
   "id": "HZG8RxsuMYOGFXxx",
   "tags": [

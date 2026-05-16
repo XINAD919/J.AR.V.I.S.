@@ -758,6 +758,20 @@ services:
     networks:
       - medai-network
 
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    restart: unless-stopped
+    ports:
+      - "4001:3000"
+    environment:
+      - WAHA_DASHBOARD_ENABLED=true
+      - WAHA_DASHBOARD_USERNAME=admin
+      - WAHA_DASHBOARD_PASSWORD=admin
+      - WHATSAPP_API_KEY=eD5Sv7WUE84k8Bnfwg+MyHMCnR3TjVTT6dbjphDbOug=
+      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+    volumes:
+      - ./volumes/waha-sessions:/app/.sessions
   # ============================================================================
   # FastAPI Backend (updated DATABASE_URL + new Supabase storage env vars)
   # ============================================================================
