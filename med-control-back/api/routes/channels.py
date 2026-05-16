@@ -126,6 +126,12 @@ async def configure_channel(
         if "webhook_url" not in config.metadata:
             raise HTTPException(400, "Discord requiere webhook_url en metadata")
 
+    elif config.channel == "whatsapp":
+        try:
+            int(config.notify_id)
+        except ValueError:
+            raise HTTPException(400, "WhatsApp notify_id debe ser un numero")
+
     await upsert_user_channel(
         user_id=user_id,
         channel=config.channel,
@@ -177,7 +183,13 @@ async def remove_channel(
         raise HTTPException(403, "No autorizado")
     """Elimina un canal de notificacion del usuario."""
     client = get_supabase()
-    res = await client.table("user_channels").delete().eq("user_id", user_id).eq("channel", channel).execute()
+    res = (
+        await client.table("user_channels")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("channel", channel)
+        .execute()
+    )
     if not res.data:
         raise HTTPException(404, "Canal no encontrado")
 
@@ -195,8 +207,19 @@ async def set_primary_channel(
         raise HTTPException(403, "No autorizado")
     """Marca un canal como primario (desactiva is_primary en los demas)."""
     client = get_supabase()
-    await client.table("user_channels").update({"is_primary": False}).eq("user_id", user_id).execute()
-    res = await client.table("user_channels").update({"is_primary": True}).eq("user_id", user_id).eq("channel", channel).execute()
+    await (
+        client.table("user_channels")
+        .update({"is_primary": False})
+        .eq("user_id", user_id)
+        .execute()
+    )
+    res = (
+        await client.table("user_channels")
+        .update({"is_primary": True})
+        .eq("user_id", user_id)
+        .eq("channel", channel)
+        .execute()
+    )
     if not res.data:
         raise HTTPException(404, "Canal no encontrado")
 
@@ -214,12 +237,25 @@ async def toggle_channel_reminders(
         raise HTTPException(403, "No autorizado")
     """Activa o desactiva la recepcion de recordatorios para un canal verificado."""
     client = get_supabase()
-    current = await client.table("user_channels").select("receive_reminders").eq("user_id", user_id).eq("channel", channel).maybe_single().execute()
+    current = (
+        await client.table("user_channels")
+        .select("receive_reminders")
+        .eq("user_id", user_id)
+        .eq("channel", channel)
+        .maybe_single()
+        .execute()
+    )
     if not (current and current.data):
         raise HTTPException(404, "Canal no encontrado")
 
     new_value = not current.data["receive_reminders"]
-    await client.table("user_channels").update({"receive_reminders": new_value, "updated_at": "now()"}).eq("user_id", user_id).eq("channel", channel).execute()
+    await (
+        client.table("user_channels")
+        .update({"receive_reminders": new_value, "updated_at": "now()"})
+        .eq("user_id", user_id)
+        .eq("channel", channel)
+        .execute()
+    )
 
     logger.info(f"User {user_id} toggled reminders for {channel}: now {new_value}")
     return {"channel": channel, "receive_reminders": new_value}
