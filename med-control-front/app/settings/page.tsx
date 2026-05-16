@@ -6,8 +6,10 @@ import { fetchChannels, createChannel, deleteChannel, toggleChannelReminders } f
 import { canWrite } from '../lib/rbac'
 import type { Channel, ChannelType } from '../lib/types'
 import { Send, Mail, Hash, Bell, CheckCircle, AlertCircle, Trash2, ToggleLeft, ToggleRight, Plus, X } from 'lucide-react'
+import WhatsappIcon from '../components/icons/WhatsappIcon'
 
 const CHANNEL_ICONS: Record<ChannelType, React.ReactNode> = {
+  whatsapp: <WhatsappIcon size={16} />,
   telegram: <Send size={16} />,
   email: <Mail size={16} />,
   discord: <Hash size={16} />,
@@ -15,6 +17,7 @@ const CHANNEL_ICONS: Record<ChannelType, React.ReactNode> = {
 }
 
 const CHANNEL_LABELS: Record<ChannelType, string> = {
+  whatsapp: 'WhatsApp',
   telegram: 'Telegram',
   email: 'Correo electrónico',
   discord: 'Discord',
@@ -22,15 +25,16 @@ const CHANNEL_LABELS: Record<ChannelType, string> = {
 }
 
 const NOTIFY_ID_LABELS: Record<ChannelType, string> = {
+  whatsapp: 'Numero de telefono',
   telegram: 'Chat ID (número)',
   email: 'Dirección de correo',
   discord: 'User ID',
   webpush: '',
 }
 
-type AddableChannel = 'telegram' | 'email' | 'discord'
+type AddableChannel = 'whatsapp' | 'telegram' | 'email' | 'discord'
 
-const ADDABLE_CHANNELS: AddableChannel[] = ['telegram', 'email', 'discord']
+const ADDABLE_CHANNELS: AddableChannel[] = ['whatsapp', 'telegram', 'email', 'discord']
 
 function ChannelRow({
   channel,
@@ -173,6 +177,8 @@ export default function SettingsPage() {
 
   const writeAllowed = canWrite(session)
 
+  const hasPrimaryChannel = channels.some(c => c.is_primary)
+
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="mb-6">
@@ -247,11 +253,10 @@ export default function SettingsPage() {
                     key={ch}
                     type="button"
                     onClick={() => { setFormChannel(ch); setFormNotifyId(''); setFormWebhookUrl('') }}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
-                      formChannel === ch
-                        ? 'bg-blue-50 border-blue-200 text-blue-600'
-                        : 'bg-gray-50 border-gray-100 text-gray-500 hover:border-blue-100'
-                    }`}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${formChannel === ch
+                      ? 'bg-blue-50 border-blue-200 text-blue-600'
+                      : 'bg-gray-50 border-gray-100 text-gray-500 hover:border-blue-100'
+                      }`}
                   >
                     {CHANNEL_ICONS[ch]}
                     {CHANNEL_LABELS[ch]}
@@ -270,7 +275,7 @@ export default function SettingsPage() {
                 value={formNotifyId}
                 onChange={e => setFormNotifyId(e.target.value)}
                 required
-                placeholder={formChannel === 'telegram' ? '123456789' : formChannel === 'email' ? 'correo@ejemplo.com' : 'ID de usuario'}
+                placeholder={formChannel === 'whatsapp' ? '+521234567890' : formChannel === 'telegram' ? '123456789' : formChannel === 'email' ? 'correo@ejemplo.com' : 'ID de usuario'}
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
               />
             </div>
@@ -289,17 +294,19 @@ export default function SettingsPage() {
                 />
               </div>
             )}
-
             {/* Primary checkbox */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formIsPrimary}
-                onChange={e => setFormIsPrimary(e.target.checked)}
-                className="rounded"
-              />
-              <span className="text-sm text-gray-600">Canal principal</span>
-            </label>
+            {!hasPrimaryChannel && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formIsPrimary}
+                  onChange={e => setFormIsPrimary(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-sm text-gray-600">Canal principal</span>
+              </label>
+            )}
+
 
             {formError && (
               <p className="text-xs text-red-500">{formError}</p>

@@ -1,5 +1,5 @@
 export type ReminderStatus = 'scheduled' | 'firing' | 'completed' | 'failed' | 'cancelled'
-export type ChannelType = 'telegram' | 'email' | 'discord' | 'webpush'
+export type ChannelType = 'telegram' | 'email' | 'discord' | 'webpush' | 'whatsapp'
 
 export interface Reminder {
   reminder_id: string
