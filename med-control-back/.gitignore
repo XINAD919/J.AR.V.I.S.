@@ -6,6 +6,10 @@
 /models/*.onnx
 /models/*.bin
 
+# Docker
+/volumes/
+volumes/*
+
 # Historial de conversación
 /historial.json
 
